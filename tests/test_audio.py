@@ -27,10 +27,11 @@ class AudioTests(unittest.TestCase):
         self.card.mkdir(parents=True)
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        self.env = {**os.environ, "HOME": str(self.home), "AUDIO_MIC_ROOT": str(self.card.parent),
+        self.env = {**os.environ, "HOME": str(self.home), "AUDIO_SOURCES": f"{self.card}{os.pathsep}{self.card.parent / 'TX2'}",
+                    "AUDIO_SPLIT_SECONDS": "1800",
                     "AUDIO_EXECUTOR_HOST": socket.gethostname(), "PATH": f"{self.bin}:{os.environ['PATH']}"}
         for name in ("AUDIO_STATE_DIR", "AUDIO_STAGING_DIR", "AUDIO_IMPORT_LEDGER", "AUDIO_DISCARD_LEDGER",
-                     "AUDIO_IMPORT_HOME", "AUDIO_MIC_VOLUMES", "AUDIO_PRIVATE_COMMAND", "OPENAI_API_KEY",
+                     "AUDIO_IMPORT_HOME", "AUDIO_EXTENSIONS", "AUDIO_PRIVATE_COMMAND", "OPENAI_API_KEY",
                      "OPENAI_KEY_COMMAND", "TRANSCRIBE_MODEL", "FALLBACK_MODEL", "TRANSCRIBE_URL"):
             self.env.pop(name, None)
         self.stub("ffprobe", "print('1800')")
@@ -516,21 +517,33 @@ pathlib.Path(sys.argv[2]).write_text(' \\n\\t\\n')''')
         self.assertFalse(output.exists())
         self.assertFalse(list(self.state.glob(".audio-import-*")))
 
-    def test_config_file_sets_volumes_and_env_overrides_it(self):
+    def test_config_file_sets_sources_and_env_overrides_it(self):
         config = self.home / ".config/import-audio"
         config.mkdir(parents=True)
-        (config / "config.toml").write_text('mic_volumes = ["RX"]\n')
-        other = self.card.parent / "RX"
-        other.mkdir()
-        (other / "REC001.wav").write_bytes(b"other recorder")
+        folder = self.root / "Phone recordings"
+        folder.mkdir()
+        (folder / "Voice memo 1.m4a").write_bytes(b"phone memo")
+        (folder / "notes.txt").write_bytes(b"not audio")
+        (config / "config.toml").write_text(f'sources = ["{folder}"]\n')
         tx1 = self.recording()
+        del self.env["AUDIO_SOURCES"]
         result = self.run_audio("scan")
-        self.assertIn("REC001.wav", result.stdout)
+        self.assertIn("Voice memo 1.m4a", result.stdout)
+        self.assertNotIn("notes.txt", result.stdout)
         self.assertNotIn(str(tx1), result.stdout)
-        self.env["AUDIO_MIC_VOLUMES"] = "TX1"
+        self.env["AUDIO_SOURCES"] = str(self.card)
         result = self.run_audio("scan")
         self.assertIn(str(tx1), result.stdout)
-        self.assertNotIn("REC001.wav", result.stdout)
+        self.assertNotIn("Voice memo", result.stdout)
+
+    def test_split_flag_is_off_unless_configured(self):
+        self.recording()
+        del self.env["AUDIO_SPLIT_SECONDS"]
+        self.assertNotIn("split-continues", self.run_audio("scan").stdout)
+
+    def test_no_sources_configured_is_an_error(self):
+        del self.env["AUDIO_SOURCES"]
+        self.assertIn("No sources configured", self.run_audio("scan", ok=False).stderr)
 
     def test_no_executor_host_means_any_machine(self):
         del self.env["AUDIO_EXECUTOR_HOST"]

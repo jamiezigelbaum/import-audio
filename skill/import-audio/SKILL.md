@@ -1,17 +1,19 @@
 ---
 name: import-audio
-description: Import voice recordings from a USB recorder such as the DJI Mic 3 (its TX1/TX2 drives) or from an _inbox folder, plus optional call notes from a meeting-notes connector such as Granola; transcribe them, work out from what was said where each belongs, confirm with the owner, and file audio plus transcript under a standard naming convention. Use when the user says "import audio", "process audio", "import from my mics", "process inbox", "import calls", "file meeting notes", or plugs in the recorder and asks to pull recordings off it.
+description: Import voice recordings and other audio from any source (a USB recorder such as the DJI Mic 3, a phone-sync folder, an inbox folder of audio files) plus optional call notes from a meeting-notes connector such as Granola; transcribe them, work out from what was said where each belongs, confirm with the owner, and file audio plus transcript under a standard naming convention. Use when the user says "import audio", "process audio", "import my recordings", "process inbox", "import calls", "file meeting notes", or plugs in a recorder and asks to pull recordings off it.
 ---
 
 # Import audio
 
-Pulls recordings off the recorder, works out what each one *is* from what was
+Pulls recordings in from the configured sources (a recorder plugged in over
+USB, a phone's sync folder, a folder of files dropped in by hand), works out what each one *is* from what was
 said in it, and files audio and transcript where that kind of recording belongs.
 Call notes from a meeting-notes connector (see "Call notes") join the same
 confirmation table and follow the same routing rules.
 
-The recordings carry no label. A file off a DJI Mic 3 transmitter is
-`TX02_MIC001_20260820_114252_orig.wav` and nothing more. Content is the only
+The recordings carry no useful label. A file off a recorder is something like
+`TX02_MIC001_20260820_114252_orig.wav` (DJI Mic 3) or `REC0042.WAV`, and a
+phone gives `New Recording 12.m4a`. Content is the only
 reliable routing signal, so the order is always **stage → transcribe → classify
 → confirm with the owner → file**. Never file on a guess.
 
@@ -23,8 +25,8 @@ Everything personal lives outside this skill, in the owner's config directory:
 `$AUDIO_IMPORT_HOME`, default `~/.config/import-audio/`. Run
 `python3 scripts/audio.py config` to print the resolved paths. The directory holds:
 
-- `config.toml` — machine settings: state directory, recorder volume names,
-  executor host, transcription commands and keys. Template:
+- `config.toml` — machine settings: the sources to import from, file
+  types, state directory, executor host, transcription commands and keys. Template:
   `examples/config.toml` in this skill.
 - `routing.md` — **where things go**: the folder roots, the categories, the
   per-project overrides, the naming patterns, which projects share to a git
@@ -38,7 +40,7 @@ do not invent destinations.
 
 ## Execution owner
 
-Run every step on **one machine**: the one the recorder plugs into, which holds
+Run every step on **one machine**: the one the sources are on, which holds
 the import state. Resolve `scripts/` relative to this installed skill. A remote
 agent uses an existing authorized route to that machine; if there is none, say
 so. Never create a second ledger on another host. Setting `executor_host` in
@@ -56,11 +58,11 @@ key for the cloud lane.
 
 ## Workflow
 
-### 1. Get the recordings off the cards — first, before anything else
+### 1. Stage the recordings, then clear what's already filed
 
 ```
-scripts/stage-mics.sh
-scripts/clear-mics.sh --confirm   # immediately after, same plug-in window
+scripts/stage.sh
+scripts/clear-sources.sh --confirm   # immediately after, while the sources are present
 ```
 
 **Stage, then clear, back-to-back.** USB recorders can eject at random, so a
@@ -68,29 +70,39 @@ clear deferred to the end of the import often finds them gone. The safe window
 is right now, while staging just proved they're mounted. Clearing deletes only
 files the ledger confirms are filed and hash-verified at their destination,
 plus previously confirmed discards from the discard ledger. The files just
-staged are in neither and are never touched.
+staged are in neither and are never touched. If `routing.md` says a source's
+originals are to be kept (a phone's own recordings folder, say), skip the clear.
 
-`stage-mics.sh` copies every not-yet-verified recording from the recorder
-volumes (default `/Volumes/TX1` and `/Volumes/TX2`) into the staging directory,
-verifying each by SHA-256, and prints TSV: device, staged_path, original_path,
+Sources are the folders listed under `sources` in `config.toml`: recorder
+volumes (the DJI Mic 3 mounts as `/Volumes/TX1` and `/Volumes/TX2` on a Mac),
+sync folders, inbox folders. Any file with an audio or video extension in them
+(wav, mp3, m4a, aac, flac, ogg, opus, aiff, caf, webm, mp4, mov and more;
+`extensions` changes the list) is a candidate. Sources that aren't present are
+skipped.
+
+`stage.sh` copies every not-yet-verified recording into the staging directory,
+verifying each by SHA-256, and prints TSV: source, staged_path, original_path,
 date, time, minutes, MB, status. Add `--all` to include already-imported ones.
+The date and time come from a `_YYYYMMDD_HHMMSS_` stamp in the filename when
+there is one, otherwise from the file's modification time; check them against
+what's said when they look wrong (recorder clocks drift and miss time changes).
 
-**Everything downstream reads the staged copy, never the card.** A volume that
-vanishes mid-read fails as `Invalid argument` from both `ffmpeg` and `cp`, which
-reads like a corrupt file rather than a missing disk. Staging collapses that
-whole failure class into one short copy you can retry.
+**Everything downstream reads the staged copy, never the source.** A USB volume
+that vanishes mid-read fails as `Invalid argument` from both `ffmpeg` and `cp`,
+which reads like a corrupt file rather than a missing disk. Staging collapses
+that whole failure class into one short copy you can retry.
 
 Staging is idempotent: an already-staged file is reused only if it still hashes
 the same. A different file at that name is preserved and reported as a
 collision; resolve it without overwriting either recording. If a copy fails,
-re-seat the card and run it again; it skips whatever is already verified. Once
-it reports no failures, the cards can be unplugged for the rest of the import.
+re-seat the device and run it again; it skips whatever is already verified.
+Once it reports no failures, a recorder can be unplugged for the rest of the
+import.
 
-`scripts/scan-mics.sh` is the read-only equivalent and takes the same `--all`.
+`scripts/scan.sh` is the read-only equivalent and takes the same `--all`.
 
-If no recorder is mounted, check the `_inbox/` folders named in `routing.md`;
-the owner may have copied files across by hand. They are already on local disk
-and need no staging.
+To import a single file from anywhere else, copy it into one of the sources (an
+inbox folder) or transcribe and file it directly with the scripts below.
 
 ### The unit is the session, not the file
 
@@ -98,17 +110,18 @@ and need no staging.
 numbering; getting it wrong fragments one train of thought across entries that
 then read as unrelated.
 
-People start and stop the recorder constantly inside one sitting: to think, to
+People start and stop recording constantly inside one sitting: to think, to
 cross a road, to talk to someone. Those stops say nothing about the content.
-The DJI Mic 3 also cuts a recording at exactly 30.0 minutes (1800 s), which scan
-flags `split-continues`. Both are mechanical, not meaningful.
+Some recorders also cut long takes at a fixed length (the DJI Mic 3 at exactly
+30.0 minutes); set `split_seconds` and scan flags those `split-continues`. Both
+are mechanical, not meaningful.
 
 What separates two entries is **turning to unrelated work in between**. A
 morning walk session, a few hours of work, and an afternoon session are two
 entries. The same thread of thought is one entry, even across four files and a
 twenty-minute gap. An interruption that belongs to the session does not split
 it: if part 1 ends "I'm going in to watch the talk" and part 2 is the owner
-reporting back on it, that is one session continuing off-mic. Ask whether the
+reporting back on it, that is one session continuing off the recording. Ask whether the
 gap was *the work* or a departure from it, not how long it was.
 
 For the files of one session: transcribe the parts in order, concatenate them
@@ -116,7 +129,7 @@ into a single transcript with `## Part N — HH:MM` headers, and name the audio
 `... pt1`, `... pt2`, and so on. The entry takes the timestamp of its first part.
 
 Signals that files belong together (use them together, not alone): a part opens
-mid-thread ("and we're back"); a part ends mid-sentence at the 30-minute cap;
+mid-thread ("and we're back"); a part ends mid-sentence at the recorder's length cap;
 the topic runs straight on; gaps of minutes rather than hours. When it is
 genuinely ambiguous, put both readings in the confirmation table and let the
 owner choose.
@@ -202,8 +215,8 @@ scripts/file-recording.sh <source-audio> <destination-audio-path>
 
 Copies, verifies by SHA-256, and atomically records a hash-qualified receipt in
 the import ledger. It refuses to overwrite an existing file or to publish a
-destination on a recorder card. **The source on the card is left alone** (see
-"Clearing the cards").
+destination inside a source. **The original in the source is left alone** (see
+"Clearing the sources").
 
 Then write the transcript to its destination with the standard header (below),
 and, only if `routing.md` names a repo for that project, copy it there under
@@ -214,9 +227,9 @@ that project's redaction rules and commit and push.
 When the owner marks a recording **discard** in the table, run
 `scripts/discard-recording.sh --confirm <staged-audio>`. It records filename,
 bytes, date and SHA-256 in the discard ledger, then deletes only that staged
-copy. Never append discard rows by hand. The card copy is deleted by
-`clear-mics.sh` in the next plug-in window, or right now if the cards are still
-mounted (worth one try; never worth asking the owner to re-plug).
+copy. Never append discard rows by hand. The original is deleted by
+`clear-sources.sh` at the next import, or right now if the source is still
+present (worth one try; never worth asking the owner to re-plug a recorder).
 
 ### 7. Log and hand off tasks (optional)
 
@@ -295,19 +308,20 @@ back to its recording:
 Multi-part recordings list every source file and separate parts in the body
 with `## Part N — HH:MM` headers.
 
-## Clearing the cards
+## Clearing the sources
 
-The cards are emptied on each import, at the START, right after staging, because
-the plug-in window that proves they're mounted is the only reliable one. Each
-import therefore clears the previous import's files plus accumulated discards.
-The invariant: a file leaves the card only when it is ledger-confirmed AND
-hash-verified at its destination, or in the discard ledger with a matching
-content hash from the owner's sign-off. Clear rehashes the card file and the
-destination; a missing, symlinked or changed destination fails closed.
+Sources are emptied of filed recordings on each import, at the START, right
+after staging, because the window that proves a recorder is mounted is the only
+reliable one. Each import therefore clears the previous import's files plus
+accumulated discards. The invariant: a file leaves a source only when it is
+ledger-confirmed AND hash-verified at its destination, or in the discard ledger
+with a matching content hash from the owner's sign-off. Clear rehashes the
+original and the destination; a missing, symlinked or changed destination fails
+closed.
 
 ```
-scripts/clear-mics.sh            # dry run
-scripts/clear-mics.sh --confirm  # delete imported-and-verified files
+scripts/clear-sources.sh            # dry run
+scripts/clear-sources.sh --confirm  # delete imported-and-verified originals
 ```
 
 ## Ledger receipts without a hash

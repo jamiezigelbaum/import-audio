@@ -9,9 +9,9 @@ in a synced folder, but any layout works as long as this file describes it.
 
 - Owner: Alex Example (used in transcript names and call participants).
 - Root: `~/Dropbox/`.
-- Inbox folders for hand-copied files: `~/Dropbox/1 Projects/*/_inbox/`.
-  Anything found there is treated exactly like a file off the card, and is
-  removed from `_inbox/` once filed.
+- Sources (set in `config.toml`): the recorder, plus `~/Audio Inbox` for files
+  dropped in by hand. Filed originals are cleared from both. Never clear
+  `~/Voice Memos` (keep the phone's own copies).
 
 ## Categories and lanes
 

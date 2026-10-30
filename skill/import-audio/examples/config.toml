@@ -1,16 +1,29 @@
 # Copy to ~/.config/import-audio/config.toml (or $AUDIO_IMPORT_HOME/config.toml)
 # and edit. Every key is optional; environment variables override it
-# (AUDIO_STATE_DIR, AUDIO_STAGING_DIR, AUDIO_MIC_ROOT, AUDIO_MIC_VOLUMES,
+# (AUDIO_SOURCES, AUDIO_EXTENSIONS, AUDIO_SPLIT_SECONDS, AUDIO_STATE_DIR, AUDIO_STAGING_DIR,
 # AUDIO_EXECUTOR_HOST, AUDIO_PRIVATE_COMMAND, TRANSCRIBE_MODEL, FALLBACK_MODEL,
 # OPENAI_KEY_COMMAND, TRANSCRIBE_URL).
 
 # Where the staging copies, ledgers and lock live. Keep one per person.
 # state_dir = "~/.local/state/import-audio"
 
-# Where the recorder mounts, and its volume names. The DJI Mic 3
-# transmitters mount on a Mac as /Volumes/TX1 and /Volumes/TX2.
-# mic_root = "/Volumes"
-# mic_volumes = ["TX1", "TX2"]
+# Folders to import from. Anything with an audio or video extension in them is
+# a candidate; folders that aren't there (an unplugged recorder) are skipped.
+sources = [
+  "~/Audio Inbox",
+  # DJI Mic 3: the transmitters mount on a Mac as these two volumes.
+  # "/Volumes/TX1",
+  # "/Volumes/TX2",
+  # Other USB recorders mount under their own volume name, e.g. "/Volumes/ZOOM".
+]
+
+# File types to pick up (default: wav mp3 m4a aac flac ogg opus aif aiff caf
+# wma webm mp4 mov).
+# extensions = ["wav", "m4a"]
+
+# Seconds at which the recorder cuts long takes, so the agent knows the next
+# file continues the same session. DJI Mic 3: 1800. 0 = off.
+# split_seconds = 1800
 
 # The short hostname of the one machine allowed to run imports. Empty means
 # any machine; set it if more than one machine can reach your files.

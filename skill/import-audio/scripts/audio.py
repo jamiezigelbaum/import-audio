@@ -25,6 +25,7 @@ class AudioError(Exception):
 
 IMPORT_FIELDS = ["original_name", "bytes", "imported_at", "destination", "sha256"]
 DISCARD_FIELDS = ["filename", "bytes", "date", "sha256"]
+DEFAULT_EXTENSIONS = ["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff", "caf", "wma", "webm", "mp4", "mov"]
 
 
 def sync_directory(path):
@@ -79,10 +80,15 @@ class Audio:
         self.staging = Path(setting(config, "AUDIO_STAGING_DIR", "staging_dir", str(self.state / "audio-staging"))).expanduser()
         self.ledger = Path(os.environ.get("AUDIO_IMPORT_LEDGER", str(self.state / "audio-import-ledger.tsv")))
         self.discards = Path(os.environ.get("AUDIO_DISCARD_LEDGER", str(self.state / "audio-discard-ledger.tsv")))
-        self.mic_root = Path(setting(config, "AUDIO_MIC_ROOT", "mic_root", "/Volumes")).expanduser()
-        volumes = setting(config, "AUDIO_MIC_VOLUMES", "mic_volumes", ["TX1", "TX2"])
-        self.volumes = [v.strip() for v in (volumes.split(",") if isinstance(volumes, str) else volumes) if v.strip()]
-        self.extensions = (".wav", ".mp3", ".m4a")
+        # Sources are folders to import from: a recorder's USB volume, a phone-sync folder, an inbox.
+        sources = setting(config, "AUDIO_SOURCES", "sources", [])
+        self.sources = [Path(v.strip()).expanduser() for v in
+                        (sources.split(os.pathsep) if isinstance(sources, str) else sources) if str(v).strip()]
+        extensions = setting(config, "AUDIO_EXTENSIONS", "extensions", DEFAULT_EXTENSIONS)
+        self.extensions = tuple("." + e.strip().lower().lstrip(".") for e in
+                                (extensions.split(",") if isinstance(extensions, str) else extensions) if e.strip())
+        # Some recorders cut long takes at a fixed length (the DJI Mic 3 at 1800 s); 0 turns the flag off.
+        self.split_seconds = float(setting(config, "AUDIO_SPLIT_SECONDS", "split_seconds", 0))
 
     @contextlib.contextmanager
     def lock(self):
@@ -175,17 +181,18 @@ class Audio:
             raise AudioError("Destination must not be a symlink.")
         canonical = destination.resolve()
         if any(canonical == vol.resolve() or vol.resolve() in canonical.parents
-               for vol in (self.mic_root / name for name in self.volumes)):
-            raise AudioError("Destination cannot be on a mic card.")
+               for vol in self.sources):
+            raise AudioError("Destination cannot be inside an import source.")
         if canonical == source.resolve() or (canonical.exists() and canonical.samefile(source)):
             raise AudioError("Destination must be a separate copy, not the source or its hardlink.")
         return canonical
 
-    def cards(self):
-        volumes = [self.mic_root / name for name in self.volumes
-                   if (self.mic_root / name).is_dir()]
+    def originals(self):
+        if not self.sources:
+            raise AudioError("No sources configured; set sources in config.toml or AUDIO_SOURCES.")
+        volumes = [vol for vol in self.sources if vol.is_dir()]
         if not volumes:
-            raise AudioError("No mic connected. Nothing was examined; this does not mean the cards are empty.")
+            raise AudioError("No source is connected or present. Nothing was examined; this does not mean they are empty.")
         for vol in volumes:
             for source in sorted(vol.rglob("*")):
                 if (source.is_file() and not source.is_symlink() and not source.name.startswith("._")
@@ -209,7 +216,7 @@ class Audio:
         imports = self.rows(self.ledger, IMPORT_FIELDS)
         discards = self.rows(self.discards, DISCARD_FIELDS)
         failures = 0
-        for device, source in self.cards():
+        for device, source in self.originals():
             try:
                 sha = self.digest(source)
                 imported = self.filed(source, sha, imports)
@@ -218,7 +225,7 @@ class Audio:
                     continue
                 date, clock, duration = self.metadata(source)
                 status = "imported" if imported else "discarded" if discarded else "new"
-                if 1799.9 <= duration <= 1800.1:
+                if self.split_seconds and abs(duration - self.split_seconds) <= 0.1:
                     status += ",split-continues"
                 values = [device, str(source), date, clock, f"{duration / 60:.1f}",
                           f"{source.stat().st_size / 1048576:.0f}", status]
@@ -279,7 +286,7 @@ class Audio:
         if not confirm:
             raise AudioError("Discard requires the owner's sign-off in the confirmation table, then --confirm.")
         if source.resolve().parent != self.staging.resolve():
-            raise AudioError("Discard accepts a staged copy only; card deletion is a separate clear.")
+            raise AudioError("Discard accepts a staged copy only; deleting originals is a separate clear.")
         sha = self.digest(source)
         self.append(self.discards, DISCARD_FIELDS, dict(zip(DISCARD_FIELDS,
                     [source.name, str(source.stat().st_size), datetime.now(timezone.utc).isoformat(), sha])))
@@ -290,7 +297,7 @@ class Audio:
     def clear(self, confirm):
         imports = self.rows(self.ledger, IMPORT_FIELDS)
         discards = self.rows(self.discards, DISCARD_FIELDS)
-        for _, source in self.cards():
+        for _, source in self.originals():
             sha = self.digest(source)
             discarded = bool(self.matches(discards, source, sha))
             destination = None if discarded else self.filed(source, sha, imports)
@@ -305,9 +312,9 @@ class Audio:
                     with path.open("rb") as stream:
                         os.fsync(stream.fileno())
                     sync_directory(path.parent)
-                # Re-check the card immediately before unlink; all executor writes are serialized.
+                # Re-check the original immediately before unlink; all executor writes are serialized.
                 if self.digest(source) != sha:
-                    raise AudioError("Card changed before deletion; stopped.")
+                    raise AudioError("Original changed before deletion; stopped.")
                 if destination:
                     path, _ = destination
                     if path.is_symlink() or self.digest(path) != sha:
@@ -362,8 +369,8 @@ class Audio:
         print(f"config_home\t{config_home()}")
         print(f"state_dir\t{self.state}")
         print(f"staging_dir\t{self.staging}")
-        print(f"mic_root\t{self.mic_root}")
-        print(f"mic_volumes\t{','.join(self.volumes)}")
+        print(f"sources\t{os.pathsep.join(map(str, self.sources)) or '(none configured)'}")
+        print(f"extensions\t{','.join(self.extensions)}")
         for name in ("routing.md", "vocabulary.md"):
             path = config_home() / name
             print(f"{name}\t{path}{'' if path.exists() else ' (missing: copy it from examples/)'}")

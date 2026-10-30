@@ -1,16 +1,18 @@
 # import-audio
 
-Talk into a recorder, plug it in, and have your AI agent turn the recordings
-into transcripts filed where they belong.
+Record your thoughts on anything (a USB recorder, your phone, a laptop), and
+have your AI agent turn the recordings into transcripts filed where they belong.
 
 This is an agent skill for Claude Code and Codex (and any agent that reads a
-`SKILL.md`). It was built around the **DJI Mic 3**, whose transmitters mount as
-USB drives (`TX1`, `TX2`), but works with any recorder that shows up as a drive.
+`SKILL.md`). It imports audio from any folders you point it at: a recorder that
+mounts as a USB drive (it started with the DJI Mic 3, whose transmitters show
+up as `TX1` and `TX2`), a phone-sync folder, or an inbox you drop files into.
+Most audio and video formats work (wav, mp3, m4a, flac, ogg, mp4, mov...).
 
 ## What happens when you say "import audio"
 
-1. **Stage.** Every new recording is copied off the recorder and checked by
-   SHA-256, straight away, because these drives tend to eject on their own.
+1. **Stage.** Every new recording is copied out of its source and checked by
+   SHA-256, straight away (USB recorders tend to eject on their own).
 2. **Sniff.** The first 90 seconds are transcribed locally to find out what the
    recording is. Most people say it up front: "Personal journal...", "Notes on
    Project One...".
@@ -25,9 +27,10 @@ USB drives (`TX1`, `TX2`), but works with any recorder that shows up as a drive.
 6. **File.** Audio and transcript are copied to their folders, verified, and
    recorded in a ledger. Projects you choose can also get a (redacted)
    transcript committed to a git repo.
-7. **Clear.** On the next plug-in, recordings that are safely filed are deleted
-   from the recorder. A file leaves the recorder only when its filed copy still
-   matches by hash, or when you discarded it in the table.
+7. **Clear.** On the next import, recordings that are safely filed are deleted
+   from their source (skip this for folders you want left alone). A file is
+   deleted only when its filed copy still matches by hash, or when you
+   discarded it in the table.
 
 Meeting notes from a connector such as Granola can go through the same table.
 
@@ -49,12 +52,12 @@ and copies three templates into `~/.config/import-audio/`:
 
 | File | What to put in it |
 |---|---|
-| `config.toml` | Recorder volume names, where state lives, how to get the API key, an optional private-transcription command |
+| `config.toml` | The folders to import from, where state lives, how to get the API key, an optional private-transcription command |
 | `routing.md` | Your folders, categories, naming, which projects share to a repo and how to redact them, and where to log tasks |
 | `vocabulary.md` | Names and jargon per project, so they come back spelled right |
 
 `routing.md` is the important one: it is how the agent knows where things go.
-Then plug in the recorder and tell your agent "import audio".
+Then tell your agent "import audio".
 
 To keep the API key out of files, set `cloud.key_command` to a command that
 prints it, for example a 1Password lookup (`op read "op://Private/OpenAI/credential"`).
@@ -70,14 +73,14 @@ tests/              synthetic-audio tests: no devices, network or keys
 install.sh
 ```
 
-The scripts are usable on their own too: `skill/import-audio/scripts/scan-mics.sh`
-lists what's on the recorder; `python3 skill/import-audio/scripts/audio.py config`
+The scripts are usable on their own too: `skill/import-audio/scripts/scan.sh`
+lists what's new in your sources; `python3 skill/import-audio/scripts/audio.py config`
 shows the resolved settings.
 
 ## Safety rules
 
 - Nothing is ever overwritten.
-- A recording is deleted from the recorder only with a hash-verified receipt
+- A recording is deleted from its source only with a hash-verified receipt
   for its filed copy, or a confirmed discard.
 - Nothing is filed without your confirmation.
 - Audio is never committed to git.
