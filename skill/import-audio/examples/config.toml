@@ -1,0 +1,29 @@
+# Copy to ~/.config/import-audio/config.toml (or $AUDIO_IMPORT_HOME/config.toml)
+# and edit. Every key is optional; environment variables override it
+# (AUDIO_STATE_DIR, AUDIO_STAGING_DIR, AUDIO_MIC_ROOT, AUDIO_MIC_VOLUMES,
+# AUDIO_EXECUTOR_HOST, AUDIO_PRIVATE_COMMAND, TRANSCRIBE_MODEL, FALLBACK_MODEL,
+# OPENAI_KEY_COMMAND, TRANSCRIBE_URL).
+
+# Where the staging copies, ledgers and lock live. Keep one per person.
+# state_dir = "~/.local/state/import-audio"
+
+# Where the recorder mounts, and its volume names. The DJI Mic 3
+# transmitters mount on a Mac as /Volumes/TX1 and /Volumes/TX2.
+# mic_root = "/Volumes"
+# mic_volumes = ["TX1", "TX2"]
+
+# The short hostname of the one machine allowed to run imports. Empty means
+# any machine; set it if more than one machine can reach your files.
+# executor_host = "my-laptop"
+
+[cloud]
+# model = "gpt-transcribe"
+# fallback_model = "gpt-4o-transcribe"
+# A command that prints the OpenAI API key. Without it, OPENAI_API_KEY is used.
+# key_command = "op read 'op://Private/OpenAI/credential'"
+
+[private]
+# Leave unset to run Whisper on this machine (openai-whisper, or whisper.cpp
+# when WHISPER_CPP_MODEL is set). To use another machine you control, give a
+# command with {input} and {output}; it must write the transcript to {output}.
+# command = "my-remote-whisper {input} {output}"
